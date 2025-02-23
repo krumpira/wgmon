@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    io.kubernetes.cri-o.TTY/wg: "true"
+    io.podman.annotations.autoremove/wg: "FALSE"
+    io.podman.annotations.init/wg: "FALSE"
+    io.podman.annotations.privileged/wg: "FALSE"
+    io.podman.annotations.publish-all/wg: "FALSE"
+    org.opencontainers.image.base.digest/wg: sha256:b4b903383734dbe481647e09d27dffe574ccb8a712a4bea4ea2459d5
+    org.opencontainers.image.base.name/wg: docker.io/library/alpine:latest
+  creationTimestamp: "2024-03-20T10:09:33Z"
+  labels:
+    app: wg-pod
+  name: wg-pod
+spec:
+  automountServiceAccountToken: false
+  containers:
+  - env:
+    #- name: webhook
+    #  value: <WEBHOOK_URL>
+    #- name: interface
+    #  value: <INTERFACE>
+    #- name: filter
+    #  value: <FILTER>
+    image: localhost/wg:latest
+    name: wg
+    ports:
+    - containerPort: 3000
+      hostPort: 3000
+      protocol: UDP
+    securityContext:
+      capabilities:
+        add:
+        - CAP_NET_ADMIN
+        - CAP_NET_RAW
+        drop:
+        - CAP_MKNOD
+        - CAP_AUDIT_WRITE
+    stdin: true
+    tty: true
+    volumeMounts:
+    - mountPath: /etc/wireguard
+      name: etc-wireguard-host-0
+  enableServiceLinks: false
+  restartPolicy: always
+  volumes:
+  - hostPath:
+      path: /etc/wireguard
+      type: Directory
+    name: etc-wireguard-host-0
