@@ -1,0 +1,16 @@
+services:
+  wireguard:
+    image: wg:latest
+    container_name: wg
+    #environment:
+    #  - webhook=<WEBHOOK_URL>
+    #  - interface=<INTERFACE>
+    #  - filter=<FILTER>
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - /etc/wireguard:/etc/wireguard
+    ports:
+      - 3000:3000/udp
+    restart: always

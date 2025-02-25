@@ -31,17 +31,14 @@ docker build --build-arg intfname=custom -t wg .
 
 Wireguard keys and config should be stored in `/etc/wireguard` on host. Project assumes listen port 3000, make sure to adapt project params per your config.
 
-For podman there is available kube file. Run the project with:
+For Podman there is available kube file. Run the project with:
 ```
 podman kube play kube.yaml
 ```
 
-With Docker you have to make sure that appropriate flags are set.
+For Docker there is a docker compose file.
 ```
-docker run -v /etc/wireguard:/etc/wireguard \
-  --cap-add CAP_NET_ADMIN --cap-add CAP_NET_RAW \
-  -e webhook=<WEBHOOK_URL> -e interface=<INTERFACE> -e -filter=<FILTER> \
-  -it wg
+docker compose up
 ```
 
 Project also runs locally.

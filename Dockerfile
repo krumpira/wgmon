@@ -1,4 +1,4 @@
-FROM docker.io/golang:alpine as build
+FROM docker.io/golang:alpine AS build
 
 RUN apk update && apk add libpcap-dev gcc libc-dev
 
