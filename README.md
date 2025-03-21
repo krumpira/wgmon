@@ -37,6 +37,11 @@ podman kube play kube.yaml
 ```
 
 For Docker there is a docker compose file.
+Environment config in compose file:
+* `webhook` - URL where info about new connected wireguard peer will be sent
+* `interface` - host interface on which wireguard is listening
+* `filter` - BPF filter for wireguard traffic; containing protocol and wireguard listening port. default: `udp and dst port 3000`
+
 ```
 docker compose up
 ```

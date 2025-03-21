@@ -18,7 +18,7 @@ ENV intfname=$intfname
 
 RUN apk update && \
     apk upgrade && \
-    apk add wireguard-tools nftables libpcap
+    apk add wireguard-tools nftables libpcap iptables
 COPY --from=build /go/bin/app wgtrack
 
 CMD [ "/bin/sh", "-c", "wg-quick up \"${intfname}\" && trap : TERM INT; /wgtrack"]
