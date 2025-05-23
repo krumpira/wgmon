@@ -4,8 +4,10 @@ services:
     container_name: wg
     #environment:
     #  - webhook=<WEBHOOK_URL>
+    #  - monitor=<MONITOR_TYPE>
     #  - interface=<INTERFACE>
     #  - filter=<FILTER>
+    #  - group=<GROUP>
     cap_add:
       - NET_ADMIN
       - NET_RAW

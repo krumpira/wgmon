@@ -22,7 +22,7 @@ func NewPacketDetails(packet gopacket.Packet) *PacketDetails {
 	var layer4, layer5 string
 
 	packetTime := time.Now()
-	if meta := packet.Metadata(); meta != nil {
+	if meta := packet.Metadata(); meta != nil && meta.Length != 0 {
 		packetTime = meta.Timestamp
 	}
 	if net := packet.NetworkLayer(); net != nil {

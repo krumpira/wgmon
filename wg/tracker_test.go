@@ -1,6 +1,7 @@
 package wg
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -12,8 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/nftables"
+	"github.com/google/nftables/binaryutil"
+	"github.com/google/nftables/expr"
+	"github.com/turekt/wgmon/network"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
+	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -54,14 +60,20 @@ func (p *NetworkPeer) Set() error {
 }
 
 func (p *NetworkPeer) Clean() {
-	p.Set()
-	if p.veth != nil {
-		netlink.LinkDel(*p.veth)
-	}
 	if p.ns != nil {
-		netns.DeleteNamed(p.name)
-		p.ns.Close()
+		p.Set()
+		if p.veth != nil {
+			netlink.LinkDel(*p.veth)
+		}
+		if p.ns != nil {
+			netns.DeleteNamed(p.name)
+			p.ns.Close()
+		}
 	}
+}
+
+func (p *NetworkPeer) Ns() *netns.NsHandle {
+	return p.ns
 }
 
 type Network struct {
@@ -254,7 +266,7 @@ func (wp *WgPeer) Cleanup() {
 	wp.Ctrl.Close()
 }
 
-func setupHTTP(p *NetworkPeer) {
+func startHTTP(p *NetworkPeer, srv *http.Server) {
 	p.Set()
 	http.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
 		p.Set()
@@ -270,10 +282,54 @@ func setupHTTP(p *NetworkPeer) {
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
 	})
-	http.ListenAndServe(fmt.Sprintf(":%s", ServerHTTPPort), nil)
+	srv.ListenAndServe()
 }
 
-func run(n *Network, ckey, skey wgtypes.Key) error {
+func addNftablesLogRule(group uint16, ns int) error {
+	c, err := nftables.New(nftables.WithNetNSFd(ns))
+	if err != nil {
+		return err
+	}
+
+	filter := c.AddTable(&nftables.Table{
+		Family: nftables.TableFamilyIPv4,
+		Name:   "filter",
+	})
+	input := c.AddChain(&nftables.Chain{
+		Name:     "input",
+		Table:    filter,
+		Type:     nftables.ChainTypeFilter,
+		Hooknum:  nftables.ChainHookInput,
+		Priority: nftables.ChainPriorityFilter,
+	})
+
+	// nft add rule inet filter input udp dport 3000 log group 0
+	key := uint32((1 << unix.NFTA_LOG_GROUP) | (1 << unix.NFTA_LOG_QTHRESHOLD) | (1 << unix.NFTA_LOG_SNAPLEN))
+	c.AddRule(&nftables.Rule{
+		Table: filter,
+		Chain: input,
+		Exprs: []expr.Any{
+			// [ meta load l4proto => reg 1 ]
+			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
+			// [ cmp eq reg 1 0x00000011 ]
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{unix.IPPROTO_UDP}},
+			// [ payload load 2b @ transport header + 2 => reg 1 ]
+			&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 2, Len: 2},
+			// [ cmp eq reg 1 0x0000b80b ]
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: binaryutil.BigEndian.PutUint16(ServerWireGuardPort)},
+			// [ log group 0 snaplen 0 qthreshold 0 ]
+			&expr.Log{Key: key, Group: group, Snaplen: 65535},
+		},
+	})
+
+	if err := c.Flush(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func run(n *Network, mType string, ckey, skey wgtypes.Key) error {
 	// nsenter veth1
 	if err := n.PeerA.Set(); err != nil {
 		return fmt.Errorf("failed to nsenter server net: %v", err)
@@ -286,7 +342,8 @@ func run(n *Network, ckey, skey wgtypes.Key) error {
 		return fmt.Errorf("failed creating server peer: %v", err)
 	}
 	// start http hook mock
-	go setupHTTP(n.PeerA)
+	srv := &http.Server{Addr: fmt.Sprintf(":%s", ServerHTTPPort)}
+	go startHTTP(n.PeerA, srv)
 
 	// setup wg interface and listener
 	server.AddPeer(ClientWireGuardIP+"/24", ckey.PublicKey(), nil)
@@ -297,7 +354,17 @@ func run(n *Network, ckey, skey wgtypes.Key) error {
 	// set check params and init tracker
 	idleTimeout = 2 * time.Second
 	tickInterval = 1 * time.Second
-	tracker, err := NewTracker(ServerVethName, fmt.Sprintf("http://%s:%s/echo", ServerWireGuardIP, ServerHTTPPort), fmt.Sprintf("udp and dst port %d", ServerWireGuardPort))
+	var monitor network.Monitor
+	switch mType {
+	case "nflog":
+		group := uint16(0)
+		ns := int(*n.PeerA.Ns())
+		addNftablesLogRule(group, ns)
+		monitor = network.NewNFLogMonitor(group, ns)
+	default:
+		monitor = network.NewBPFMonitor(ServerVethName, fmt.Sprintf("udp and dst port %d", ServerWireGuardPort))
+	}
+	tracker, err := NewTracker(monitor, fmt.Sprintf("http://%s:%s/echo", ServerWireGuardIP, ServerHTTPPort))
 	if err != nil {
 		return fmt.Errorf("failed to init tracker: %v", err)
 	}
@@ -343,7 +410,7 @@ func run(n *Network, ckey, skey wgtypes.Key) error {
 	for range 3 {
 		go makeRequest()
 	}
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	// check live peers
 	counter := func() int32 {
@@ -369,6 +436,11 @@ func run(n *Network, ckey, skey wgtypes.Key) error {
 		return fmt.Errorf("unexpected second conn count: got %d, want %d", got, want)
 	}
 
+	// shutdown http
+	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownRelease()
+	srv.Shutdown(shutdownCtx)
+	http.DefaultServeMux = http.NewServeMux()
 	return nil
 }
 
@@ -388,14 +460,17 @@ func TestTracker(t *testing.T) {
 		t.Fatalf("failed generating client key: %v", err)
 	}
 
-	n, err := NewNetwork(ServerVethName, ServerVethIPN, ClientVethName, ClientVethIPN)
-	if err != nil {
-		t.Fatalf("failed creating network: %v", err)
-	}
+	for _, mType := range []string{"nflog", "bpf"} {
+		n, err := NewNetwork(ServerVethName, ServerVethIPN, ClientVethName, ClientVethIPN)
+		if err != nil {
+			t.Fatalf("failed creating network: %v", err)
+		}
 
-	err = run(n, clientKey, serverKey)
-	n.Clean()
-	if err != nil {
-		t.Fatalf("test failed with error: %v", err)
+		slog.Info("initiating test", "monitor", mType)
+		err = run(n, mType, clientKey, serverKey)
+		n.Clean()
+		if err != nil {
+			t.Fatalf("test %s failed with error: %v", mType, err)
+		}
 	}
 }

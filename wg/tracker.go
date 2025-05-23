@@ -15,12 +15,12 @@ var tickInterval = 2 * time.Minute
 type Tracker struct {
 	client  *wgctrl.Client
 	connMap *ConnectionMap
-	monitor *network.Monitor
+	monitor network.Monitor
 	webhook string
 	ticker  *time.Ticker
 }
 
-func NewTracker(intf, webhook, filter string) (*Tracker, error) {
+func NewTracker(monitor network.Monitor, webhook string) (*Tracker, error) {
 	w, err := wgctrl.New()
 	if err != nil {
 		return nil, err
@@ -29,7 +29,7 @@ func NewTracker(intf, webhook, filter string) (*Tracker, error) {
 	return &Tracker{
 		client:  w,
 		connMap: NewConnectionMap(),
-		monitor: network.NewMonitor(intf, filter),
+		monitor: monitor,
 		webhook: webhook,
 		ticker:  nil,
 	}, nil
@@ -103,7 +103,7 @@ func (t *Tracker) initTicker() {
 }
 
 func (t *Tracker) handlePacket() {
-	for i := range t.monitor.C {
+	for i := range t.monitor.PacketChan() {
 		details := network.NewPacketDetails(i)
 		if t.ticker == nil {
 			// report this initial packet
@@ -134,7 +134,7 @@ func (t *Tracker) Start() {
 }
 
 func (t *Tracker) startWatch(watchFunc func()) error {
-	if err := t.monitor.OpenHandle(); err != nil {
+	if err := t.monitor.Open(); err != nil {
 		slog.Error("error opening handle", "error", err)
 		return err
 	}
@@ -155,7 +155,7 @@ func (t *Tracker) Stop() {
 	select {
 	case <-ct:
 	case <-time.After(3 * time.Second):
-		t.monitor.S <- byte(0x01)
+		t.monitor.ShutdownChan() <- byte(0x01)
 	}
 
 	if t.ticker != nil {
