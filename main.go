@@ -5,8 +5,10 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
+	"github.com/turekt/wgmon/network"
 	"github.com/turekt/wgmon/wg"
 )
 
@@ -19,12 +21,26 @@ func flagStringEnvOverride(key, value, desc string) *string {
 }
 
 func main() {
-	interfacePtr := flagStringEnvOverride("interface", "eth0", "interface where to listen for packets")
-	filterPtr := flagStringEnvOverride("filter", "udp and dst port 3000", "bpf filter triggering wg show")
+	monitorTypePtr := flagStringEnvOverride("monitor", "nflog", "type of monitor to use (bpf or nflog)")
+	groupPtr := flagStringEnvOverride("group", "1", "nflog group index in case nflog is used as monitor")
+	interfacePtr := flagStringEnvOverride("interface", "eth0", "interface where to listen for packets (if bpf is used)")
+	filterPtr := flagStringEnvOverride("filter", "udp and dst port 3000", "bpf filter triggering wg show (if bpf is used)")
 	webhookPtr := flagStringEnvOverride("webhook", "", "custom webhook where to report events")
 	flag.Parse()
 
-	tracker, err := wg.NewTracker(*interfacePtr, *webhookPtr, *filterPtr)
+	var monitor network.Monitor
+	switch *monitorTypePtr {
+	case "bpf":
+		monitor = network.NewBPFMonitor(*interfacePtr, *filterPtr)
+	default:
+		group, err := strconv.ParseUint(*groupPtr, 10, 16)
+		if err != nil {
+			slog.Error("unable to parse provided group to uint16", "provided", *groupPtr, "error", err)
+		}
+		monitor = network.NewNFLogMonitor(uint16(group), 0)
+	}
+
+	tracker, err := wg.NewTracker(monitor, *webhookPtr)
 	if err != nil {
 		slog.Error("failed to initiate tracker", "error", err)
 		return

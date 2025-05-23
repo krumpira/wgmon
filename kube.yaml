@@ -7,9 +7,6 @@ metadata:
     io.podman.annotations.init/wg: "FALSE"
     io.podman.annotations.privileged/wg: "FALSE"
     io.podman.annotations.publish-all/wg: "FALSE"
-    org.opencontainers.image.base.digest/wg: sha256:b4b903383734dbe481647e09d27dffe574ccb8a712a4bea4ea2459d5
-    org.opencontainers.image.base.name/wg: docker.io/library/alpine:latest
-  creationTimestamp: "2024-03-20T10:09:33Z"
   labels:
     app: wg-pod
   name: wg-pod
@@ -19,10 +16,21 @@ spec:
   - env:
     #- name: webhook
     #  value: <WEBHOOK_URL>
+    ## Either "bpf" or "nflog"
+    #- name: monitor
+    #  value: <MONITOR_TYPE>
+    ## Needed in bpf mode
+    ## Usually public facing interface
     #- name: interface
     #  value: <INTERFACE>
+    ## Needed in bpf mode
+    ## BPF filter for PCAP
     #- name: filter
     #  value: <FILTER>
+    ## Needed in nflog mode
+    ## Netfilter group to listen to
+    #- name: group
+    #  value: <GROUP>
     image: localhost/wg:latest
     name: wg
     ports:
